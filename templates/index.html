@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutoNav Detector</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <!-- Google Fonts: Syne (display) + DM Mono (data) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+  <!-- ── Grid background ───────────────────────────────────────────── -->
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <main class="container">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="logo-badge">YOLOv8</div>
+      <h1 class="title">AutoNav <span class="accent">Detector</span></h1>
+      <p class="subtitle">
+        Upload an image — bounding boxes, labels &amp; confidence scores
+        are drawn in real time using a YOLOv8n model.
+      </p>
+    </header>
+
+    <!-- Upload card -->
+    <section class="card upload-card" id="upload-card">
+
+      <label class="drop-zone" id="drop-zone" for="file-input">
+        <div class="drop-icon" aria-hidden="true">
+          <!-- camera / upload SVG -->
+          <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="4" y="12" width="40" height="30" rx="4" stroke="currentColor" stroke-width="2.5"/>
+            <circle cx="24" cy="27" r="8" stroke="currentColor" stroke-width="2.5"/>
+            <path d="M17 12l3-5h8l3 5" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>
+            <circle cx="38" cy="18" r="2" fill="currentColor"/>
+          </svg>
+        </div>
+        <p class="drop-primary">Drag &amp; drop your image here</p>
+        <p class="drop-secondary">or click to browse — JPG, PNG, WebP · max 16 MB</p>
+        <input type="file" id="file-input" accept="image/*" hidden />
+      </label>
+
+      <!-- Preview area (shown once file is chosen) -->
+      <div class="preview-wrapper hidden" id="preview-wrapper">
+        <img id="preview-img" class="preview-img" src="" alt="Preview" />
+        <button class="btn-clear" id="btn-clear" title="Remove">✕</button>
+        <p class="preview-name" id="preview-name"></p>
+      </div>
+
+      <button class="btn-detect" id="btn-detect" disabled>
+        <span class="btn-text">Detect Objects</span>
+        <span class="btn-spinner hidden" id="spinner" aria-label="Loading…"></span>
+      </button>
+
+    </section>
+
+    <!-- Error banner -->
+    <div class="error-banner hidden" id="error-banner" role="alert"></div>
+
+    <!-- Results card -->
+    <section class="card result-card hidden" id="result-card">
+
+      <div class="result-header">
+        <h2 class="result-title">Detection Result</h2>
+        <div class="result-stats" id="result-stats"></div>
+      </div>
+
+      <div class="result-img-wrap">
+        <img id="result-img" src="" alt="Detection result" class="result-img" />
+      </div>
+
+      <div class="tag-list" id="tag-list"></div>
+
+      <a id="download-link" class="btn-download" download>⬇ Download Result</a>
+
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    Built with YOLOv8 · Flask · OpenCV &nbsp;|&nbsp; AutoNav Rover Project
+  </footer>
+
+  <script>
+    /* ── DOM refs ─────────────────────────────────────────────────────── */
+    const dropZone     = document.getElementById("drop-zone");
+    const fileInput    = document.getElementById("file-input");
+    const previewWrap  = document.getElementById("preview-wrapper");
+    const previewImg   = document.getElementById("preview-img");
+    const previewName  = document.getElementById("preview-name");
+    const btnClear     = document.getElementById("btn-clear");
+    const btnDetect    = document.getElementById("btn-detect");
+    const spinner      = document.getElementById("spinner");
+    const errorBanner  = document.getElementById("error-banner");
+    const resultCard   = document.getElementById("result-card");
+    const resultImg    = document.getElementById("result-img");
+    const resultStats  = document.getElementById("result-stats");
+    const tagList      = document.getElementById("tag-list");
+    const downloadLink = document.getElementById("download-link");
+
+    let selectedFile = null;
+
+    /* ── File handling ───────────────────────────────────────────────── */
+    function setFile(file) {
+      if (!file || !file.type.startsWith("image/")) {
+        showError("Please select a valid image file (JPG, PNG, WebP…).");
+        return;
+      }
+      selectedFile = file;
+      const url = URL.createObjectURL(file);
+      previewImg.src = url;
+      previewName.textContent = file.name;
+      previewWrap.classList.remove("hidden");
+      dropZone.classList.add("hidden");
+      btnDetect.disabled = false;
+      hideError();
+      resultCard.classList.add("hidden");
+    }
+
+    function clearFile() {
+      selectedFile = null;
+      fileInput.value = "";
+      previewWrap.classList.add("hidden");
+      dropZone.classList.remove("hidden");
+      btnDetect.disabled = true;
+      hideError();
+      resultCard.classList.add("hidden");
+    }
+
+    /* ── Drag & drop ─────────────────────────────────────────────────── */
+    dropZone.addEventListener("dragover",  e => { e.preventDefault(); dropZone.classList.add("drag-over"); });
+    dropZone.addEventListener("dragleave", ()  => dropZone.classList.remove("drag-over"));
+    dropZone.addEventListener("drop",      e  => {
+      e.preventDefault();
+      dropZone.classList.remove("drag-over");
+      const file = e.dataTransfer.files[0];
+      if (file) setFile(file);
+    });
+
+    fileInput.addEventListener("change", () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
+    btnClear.addEventListener("click",   clearFile);
+
+    /* ── Detect request ──────────────────────────────────────────────── */
+    btnDetect.addEventListener("click", async () => {
+      if (!selectedFile) return;
+
+      // Loading state
+      btnDetect.querySelector(".btn-text").textContent = "Detecting…";
+      spinner.classList.remove("hidden");
+      btnDetect.disabled = true;
+      hideError();
+      resultCard.classList.add("hidden");
+
+      const form = new FormData();
+      form.append("image", selectedFile);
+
+      try {
+        const res  = await fetch("/detect", { method: "POST", body: form });
+        const data = await res.json();
+
+        if (!data.success) {
+          showError(data.error || "Detection failed. Please try again.");
+        } else {
+          showResult(data);
+        }
+      } catch (err) {
+        showError("Network error — is the Flask server running?");
+      } finally {
+        btnDetect.querySelector(".btn-text").textContent = "Detect Objects";
+        spinner.classList.add("hidden");
+        btnDetect.disabled = false;
+      }
+    });
+
+    /* ── Render result ───────────────────────────────────────────────── */
+    function showResult({ image_url, count, labels }) {
+      resultImg.src   = image_url + "?t=" + Date.now();   // bust cache
+      downloadLink.href = image_url;
+      downloadLink.download = image_url.split("/").pop();
+
+      resultStats.innerHTML =
+        `<span class="stat-badge">${count} object${count !== 1 ? "s" : ""} detected</span>`;
+
+      // Unique label counts
+      const freq = labels.reduce((acc, l) => { acc[l] = (acc[l] || 0) + 1; return acc; }, {});
+      tagList.innerHTML = Object.entries(freq)
+        .map(([label, n]) => `<span class="tag">${label}<em>${n}</em></span>`)
+        .join("");
+
+      resultCard.classList.remove("hidden");
+      resultCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    /* ── Error helpers ───────────────────────────────────────────────── */
+    function showError(msg) {
+      errorBanner.textContent = "⚠ " + msg;
+      errorBanner.classList.remove("hidden");
+    }
+    function hideError() {
+      errorBanner.classList.add("hidden");
+    }
+  </script>
+</body>
+</html>
