@@ -96,9 +96,13 @@ Edit the top of `detector.py` to change:
 
 ---
 
-## 📸 Sample Screenshots
+## 📸 Results
 
-> Add screenshots of your results here after running the app!
+### Input
+![Upload](screenshots/upload.png)
+
+### Output
+![Detection](screenshots/result.png)
 
 ```
 screenshots/
